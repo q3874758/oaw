@@ -1,0 +1,11 @@
+# Build
+bin/
+*.exe
+
+# Data
+data/
+*.db
+
+# IDE
+.idea/
+.vscode/
