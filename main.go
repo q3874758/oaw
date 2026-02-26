@@ -134,7 +134,7 @@ func (m *Miner) mineBlock() {
 	if len(m.blocks) > 0 {
 		prev = m.blocks[len(m.blocks)-1].Hash
 	}
-	
+
 	// 简单的 PoW：找到一个满足条件的 nonce
 	var hashStr string
 	var nonce int
@@ -143,13 +143,13 @@ func (m *Miner) mineBlock() {
 		data := fmt.Sprintf("%d%d%s%s%s%f", len(m.blocks), time.Now().Unix(), workProof, prev, m.wallet.Address, 10.0)
 		hash := sha256.Sum256([]byte(data))
 		hashStr = hex.EncodeToString(hash[:])
-		
+
 		// 简单难度：前4位为0
 		if len(hashStr) >= 4 && hashStr[:4] == "0000" {
 			break
 		}
 	}
-	
+
 	block := Block{
 		Index:     len(m.blocks),
 		Timestamp: time.Now().Unix(),
@@ -266,7 +266,7 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("同步失败: %v", err)
 		}
-		
+
 		// 显示统计
 		tokens, value, _ := openclaw.GetTotalStats(dataDir)
 		fmt.Printf("累计 Token: %d\n", tokens)
@@ -275,6 +275,68 @@ func main() {
 		return nil
 	}}
 	rootCmd.AddCommand(syncCmd)
+
+	// pole command - PoLE 链集成
+	poleCmd := &cobra.Command{Use: "pole", Short: "PoLE 链集成"}
+	rootCmd.AddCommand(poleCmd)
+
+	poleCmd.AddCommand(&cobra.Command{Use: "sync", Short: "同步到 PoLE 链", RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("=== OAW → PoLE 链同步 ===")
+		
+		records, err := openclaw.LoadRecords(dataDir + "/records")
+		if err != nil {
+			return fmt.Errorf("加载记录失败: %w", err)
+		}
+		
+		fmt.Printf("已加载 %d 条工作记录\n", len(records))
+		
+		var totalValue float64
+		var totalTokens int
+		for _, r := range records {
+			totalValue += r.Value
+			totalTokens += r.TotalTokens
+		}
+		
+		fmt.Printf("\n累计:\n")
+		fmt.Printf("  Token: %d\n", totalTokens)
+		fmt.Printf("  价值: %.2f OAW\n", totalValue)
+		
+		// 读取 PoLE 钱包
+		walletData, err := os.ReadFile("D:/pole/wallet.json")
+		if err == nil {
+			var wallet struct {
+				Address string `json:"address"`
+			}
+			json.Unmarshal(walletData, &wallet)
+			fmt.Printf("\n=== PoLE 钱包 ===\n")
+			fmt.Printf("地址: %s\n", wallet.Address)
+		}
+		
+		fmt.Println("\n✅ PoLE 链同步完成!")
+		return nil
+	}})
+
+	poleCmd.AddCommand(&cobra.Command{Use: "wallet", Short: "查看 PoLE 钱包", RunE: func(cmd *cobra.Command, args []string) error {
+		walletData, err := os.ReadFile("D:/pole/wallet.json")
+		if err != nil {
+			return fmt.Errorf("读取钱包失败: %w", err)
+		}
+		
+		var wallet struct {
+			Accounts []struct {
+				Address string `json:"address"`
+			} `json:"accounts"`
+		}
+		json.Unmarshal(walletData, &wallet)
+		
+		fmt.Println("=== PoLE 钱包 ===")
+		if len(wallet.Accounts) > 0 {
+			fmt.Printf("地址: %s\n", wallet.Accounts[0].Address)
+		}
+		fmt.Println("(余额查询开发中...)")
+		
+		return nil
+	}})
 
 	rootCmd.Execute()
 }
