@@ -75,11 +75,27 @@ type Miner struct {
 }
 
 func NewMiner(w *Wallet, dir string) *Miner {
-	return &Miner{wallet: w, blocks: []Block{}, dataDir: dir}
+	m := &Miner{wallet: w, blocks: []Block{}, dataDir: dir}
+	m.loadBlocks()
+	return m
+}
+
+func (m *Miner) loadBlocks() {
+	data, err := os.ReadFile(filepath.Join(m.dataDir, "blocks.json"))
+	if err == nil {
+		json.Unmarshal(data, &m.blocks)
+	}
+}
+
+func (m *Miner) saveBlocks() {
+	data, _ := json.MarshalIndent(m.blocks, "", "  ")
+	os.WriteFile(filepath.Join(m.dataDir, "blocks.json"), data, 0644)
 }
 
 func (m *Miner) Start(ctx context.Context) {
 	m.working = true
+	// 立即挖一个区块
+	m.mineBlock()
 	go m.mineLoop(ctx)
 }
 
@@ -117,19 +133,34 @@ func (m *Miner) mineBlock() {
 	if len(m.blocks) > 0 {
 		prev = m.blocks[len(m.blocks)-1].Hash
 	}
+	
+	// 简单的 PoW：找到一个满足条件的 nonce
+	var hashStr string
+	var nonce int
+	for nonce = 0; nonce < 100000; nonce++ {
+		workProof := fmt.Sprintf("%d", nonce)
+		data := fmt.Sprintf("%d%d%s%s%s%f", len(m.blocks), time.Now().Unix(), workProof, prev, m.wallet.Address, 10.0)
+		hash := sha256.Sum256([]byte(data))
+		hashStr = hex.EncodeToString(hash[:])
+		
+		// 简单难度：前4位为0
+		if len(hashStr) >= 4 && hashStr[:4] == "0000" {
+			break
+		}
+	}
+	
 	block := Block{
 		Index:     len(m.blocks),
 		Timestamp: time.Now().Unix(),
-		WorkProof: fmt.Sprintf("%d", len(m.blocks)),
+		WorkProof: fmt.Sprintf("%d", nonce),
 		Previous:  prev,
 		Miner:     m.wallet.Address,
 		Value:     10.0,
+		Hash:      hashStr,
 	}
-	data := fmt.Sprintf("%d%d%s%s%s%f", block.Index, block.Timestamp, block.WorkProof, block.Previous, block.Miner, block.Value)
-	hash := sha256.Sum256([]byte(data))
-	block.Hash = hex.EncodeToString(hash[:])
-	
+
 	m.blocks = append(m.blocks, block)
+	m.saveBlocks()
 	fmt.Printf(" 挖到新区块 #%d, 奖励: %.2f OAW\n", block.Index, block.Value)
 }
 
