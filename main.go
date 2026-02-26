@@ -259,70 +259,21 @@ func main() {
 	}})
 
 	// sync command - 从 OpenClaw 同步工作量
-	var openclawURL string
-	var openclawToken string
-
 	syncCmd := &cobra.Command{Use: "sync", Short: "从 OpenClaw 同步工作量", RunE: func(cmd *cobra.Command, args []string) error {
-		if openclawURL == "" {
-			openclawURL = "http://localhost:18789"
-		}
-		if openclawToken == "" {
-			// 尝试从环境变量读取
-			openclawToken = os.Getenv("OPENCLAW_TOKEN")
-			if openclawToken == "" {
-				// 尝试从配置文件读取
-				home := os.Getenv("USERPROFILE")
-				if home != "" {
-					configPath := filepath.Join(home, ".openclaw", "openclaw.json")
-					data, _ := os.ReadFile(configPath)
-					var config map[string]interface{}
-					json.Unmarshal(data, &config)
-					if gateway, ok := config["gateway"].(map[string]interface{}); ok {
-						if auth, ok := gateway["auth"].(map[string]interface{}); ok {
-							if token, ok := auth["token"].(string); ok {
-								openclawToken = token
-							}
-						}
-					}
-				}
-			}
-		}
-
-		if openclawToken == "" {
-			return fmt.Errorf("请设置 --token 或 OPENCLAW_TOKEN 环境变量")
-		}
-
-		fmt.Printf("连接 OpenClaw: %s\n", openclawURL)
-		oc := openclaw.New(openclawURL, openclawToken)
+		fmt.Println("从 OpenClaw 同步工作量...")
 		
-		// 获取工作量
-		summaries, err := oc.GetWorkSummary()
+		err := openclaw.SyncFromSessions(dataDir)
 		if err != nil {
-			return fmt.Errorf("获取工作量失败: %v", err)
+			return fmt.Errorf("同步失败: %v", err)
 		}
-
-		fmt.Printf("获取到 %d 条会话记录\n", len(summaries))
 		
-		totalValue := 0.0
-		for _, s := range summaries {
-			record := openclaw.WorkRecord{
-				Timestamp:  s.EndTime,
-				AgentID:    s.AgentID,
-				TasksDone:  s.TasksDone,
-				Tokens:     s.TokenUsed,
-				LinesCode:  s.LinesCode,
-				Files:      s.FilesCreate,
-			}
-			record.Value = openclaw.CalculateValue(record)
-			openclaw.SaveRecord(dataDir+"/records", record)
-			totalValue += record.Value
-		}
-
-		fmt.Printf("总价值: %.2f OAW\n", totalValue)
+		// 显示统计
+		tokens, value, _ := openclaw.GetTotalStats(dataDir)
+		fmt.Printf("累计 Token: %d\n", tokens)
+		fmt.Printf("累计价值: %.2f OAW\n", value)
+		
 		return nil
 	}}
-	syncCmd.Flags().StringVar(&openclawURL, "url", "", "OpenClaw URL")
-	syncCmd.Flags().StringVar(&openclawToken, "token", "", "OpenClaw Token")
 	rootCmd.AddCommand(syncCmd)
 
 	rootCmd.Execute()
