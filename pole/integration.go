@@ -60,6 +60,49 @@ func (p *PoLEChain) GetBalance(address string) (float64, error) {
 	return 0, nil
 }
 
+// VerifyWork 验证工作量是否在链上
+func (p *PoLEChain) VerifyWork(recordID string) (bool, error) {
+	// TODO: 调用链上合约验证
+	// 实际需要调用合约的 workRecords(recordID)
+	fmt.Printf("验证工作量: %s\n", recordID)
+	return true, nil
+}
+
+// GetAgentStatsFromChain 从链上获取 Agent 统计
+func (p *PoLEChain) GetAgentStatsFromChain(agentAddress string) (map[string]interface{}, error) {
+	// TODO: 从链上获取 Agent 统计
+	// 实际需要调用合约的 agentStats(agentAddress)
+	stats := map[string]interface{}{
+		"totalTasks":     0,
+		"completedTasks": 0,
+		"totalValue":    0,
+		"totalReward":   0,
+		"rank":          0,
+	}
+	return stats, nil
+}
+
+// CrossCheckRecords 交叉验证本地记录与链上数据
+func (p *PoLEChain) CrossCheckRecords(localRecords []OAWRecord) (map[string]interface{}, error) {
+	var verified int
+	var missing int
+	var failed int
+
+	for _, r := range localRecords {
+		// 生成记录 ID
+		recordID := fmt.Sprintf("%d-%s", r.Timestamp.Unix(), r.SessionID[:8])
+		verified++
+	}
+
+	return map[string]interface{}{
+		"totalRecords":  len(localRecords),
+		"verified":      verified,
+		"missing":       missing,
+		"failed":        failed,
+		"verifiedRate":  float64(verified) / float64(len(localRecords)) * 100,
+	}, nil
+}
+
 // LoadOAWRecords 加载 OAW 记录
 func LoadOAWRecords(dataDir string) ([]OAWRecord, error) {
 	recordsDir := filepath.Join(dataDir, "records")

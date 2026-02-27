@@ -42,6 +42,14 @@ contract WorkProof {
     address public owner;
     uint256 public constant REWARD_PER_VALUE = 1e18; // 每单位价值对应奖励
     
+    // ============ 新增：自动注销功能 ============
+    uint256 public constant INACTIVE_DAYS = 730 days; // 2年无活动自动注销
+    mapping(address => uint256) public lastActiveTime; // 最后活跃时间
+    mapping(address => uint256) public lockedBalance; // 锁定的余额
+    
+    event AccountFrozen(address indexed agent, uint256 balance);
+    event BalanceReleased(address indexed agent, uint256 amount);
+    
     // ============ 事件 ============
     
     event WorkRecorded(
@@ -222,5 +230,75 @@ contract WorkProof {
     function withdraw() external {
         require(msg.sender == owner);
         payable(owner).transfer(address(this).balance);
+    }
+    
+    // ============ 自动注销功能 ============
+    
+    /**
+     * @dev 更新最后活跃时间 (每次有活动时调用)
+     */
+    function updateLastActive() external {
+        lastActiveTime[msg.sender] = block.timestamp;
+    }
+    
+    /**
+     * @dev 检查并释放不活跃账户
+     * @param _agent 要检查的账户地址
+     * @return 释放的余额金额
+     */
+    function checkAndReleaseInactive(address _agent) external returns (uint256) {
+        require(lastActiveTime[_agent] > 0, "Agent never active");
+        
+        uint256 inactivePeriod = block.timestamp - lastActiveTime[_agent];
+        
+        // 检查是否超过30天不活跃
+        if (inactivePeriod > INACTIVE_DAYS) {
+            uint256 balance = agentStats[_agent].totalReward;
+            
+            if (balance > 0) {
+                // 锁定余额
+                lockedBalance[_agent] = balance;
+                
+                // 清零奖励
+                agentStats[_agent].totalReward = 0;
+                
+                // 释放到奖励池
+                rewardPool += balance;
+                
+                emit BalanceReleased(_agent, balance);
+                emit AccountFrozen(_agent, balance);
+                
+                return balance;
+            }
+        }
+        
+        return 0;
+    }
+    
+    /**
+     * @dev 批量检查多个账户
+     * @param _agents 账户地址数组
+     */
+    function checkBatchInactive(address[] calldata _agents) external {
+        for (uint256 i = 0; i < _agents.length; i++) {
+            checkAndReleaseInactive(_agents[i]);
+        }
+    }
+    
+    /**
+     * @dev 查询账户是否将被释放
+     * @param _agent 账户地址
+     */
+    function willBeReleased(address _agent) external view returns (bool, uint256) {
+        if (lastActiveTime[_agent] == 0) {
+            return (false, 0);
+        }
+        
+        uint256 inactivePeriod = block.timestamp - lastActiveTime[_agent];
+        uint256 daysLeft = (INACTIVE_DAYS > inactivePeriod) 
+            ? (INACTIVE_DAYS - inactivePeriod) / 86400 
+            : 0;
+        
+        return (inactivePeriod > INACTIVE_DAYS, daysLeft);
     }
 }
