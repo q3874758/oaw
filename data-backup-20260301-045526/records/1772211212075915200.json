@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-02-27T01:44:08.841+09:00",
+  "session_id": "a7c28f68-8a9a-4239-992c-d94e1fe878a1",
+  "agent_id": "",
+  "kind": "direct",
+  "input_tokens": 27267,
+  "output_tokens": 1271,
+  "total_tokens": 16269,
+  "value": 99.83300000000001
+}

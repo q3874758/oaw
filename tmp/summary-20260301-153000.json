@@ -1,0 +1,4 @@
+{
+  "summary": "将所有活动改为由区块链记录处理：1) 修改 checkInactiveWallets 函数，改为连接 PoLE 链并用 OAW 钱包签名注销交易，发送到链上记录；2) 在 mineBlock 函数中挖到区块后，自动将奖励信息签名发送到链上记录；3) 修复了编译错误（未使用的 totalReleased 变量）；4) SignTransaction 函数已存在于 pole_rpc.go 中。编译成功。",
+  "current_status": "项目已编译成功。所有活动（挖矿奖励、不活跃注销）现在都会记录到 PoLE 区块链上。"
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,12 +10,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
-	"strings"
+	"time"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// PoLE RPC 客户端 (简化版)
+// PoLE RPC 客户端 (适配 PoLE REST API)
 type PoleRPC struct {
 	NodeURL string
 }
@@ -24,198 +26,212 @@ func NewPoleRPC(nodeURL string) *PoleRPC {
 	return &PoleRPC{NodeURL: nodeURL}
 }
 
-// RPCRequest RPC 请求
-type RPCRequest struct {
-	JSONRPC string        `json:"jsonrpc"`
-	Method  string       `json:"method"`
-	Params  []interface{} `json:"params"`
-	ID      int          `json:"id"`
-}
-
-// RPCResponse RPC 响应
-type RPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID     int          `json:"id"`
-	Result interface{}  `json:"result,omitempty"`
-	Error  *RPCError   `json:"error,omitempty"`
-}
-
-// RPCError RPC 错误
-type RPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// Call 调用 RPC 方法
-func (p *PoleRPC) Call(method string, params ...interface{}) (*RPCResponse, error) {
-	req := RPCRequest{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  params,
-		ID:      1,
-	}
-
-	data, _ := json.Marshal(req)
-	resp, err := http.Post(p.NodeURL, "application/json", strings.NewReader(string(data)))
-	if err != nil {
-		return nil, fmt.Errorf("连接失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var result RPCResponse
-	json.Unmarshal(body, &result)
-
-	if result.Error != nil {
-		return nil, fmt.Errorf("RPC错误: %s", result.Error.Message)
-	}
-
-	return &result, nil
+// StatusResponse 状态响应
+type StatusResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		ChainID       string `json:"chain_id"`
+		BlockHeight   int    `json:"block_height"`
+		TotalAccounts int    `json:"total_accounts"`
+	} `json:"data"`
 }
 
 // GetChainID 获取链 ID
 func (p *PoleRPC) GetChainID() (string, error) {
-	resp, err := p.Call("eth_chainId")
+	resp, err := p.doGet("/status")
 	if err != nil {
 		return "", err
 	}
-	if resp == nil || resp.Result == nil {
-		return "unknown", nil
+
+	var status StatusResponse
+	if err := json.Unmarshal(resp, &status); err != nil {
+		return "", err
 	}
-	switch v := resp.Result.(type) {
-	case string:
-		return v, nil
-	default:
-		return fmt.Sprintf("%v", v), nil
+
+	return status.Data.ChainID, nil
+}
+
+// GetBlockNumber 获取区块高度
+func (p *PoleRPC) GetBlockNumber() (string, error) {
+	resp, err := p.doGet("/block/latest")
+	if err != nil {
+		return "", err
 	}
+
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Height int `json:"height"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("0x%x", result.Data.Height), nil
 }
 
 // GetBalance 获取余额
 func (p *PoleRPC) GetBalance(address string) (string, error) {
-	resp, err := p.Call("eth_getBalance", address, "latest")
+	resp, err := p.doGet("/account/balance?address=" + address)
 	if err != nil {
 		return "0", err
 	}
-	if resp == nil || resp.Result == nil {
-		return "0", nil
-	}
-	switch v := resp.Result.(type) {
-	case string:
-		return v, nil
-	default:
-		return "0", nil
-	}
-}
 
-// GetBlockNumber 获取最新区块
-func (p *PoleRPC) GetBlockNumber() (string, error) {
-	resp, err := p.Call("eth_blockNumber")
-	if err != nil {
-		return "", err
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Balance string `json:"balance"`
+		} `json:"data"`
 	}
-	if resp == nil || resp.Result == nil {
-		return "0", nil
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "0", err
 	}
-	switch v := resp.Result.(type) {
-	case string:
-		return v, nil
-	default:
-		return fmt.Sprintf("%v", v), nil
-	}
-}
 
-// CallContract 调用合约 view 方法
-func (p *PoleRPC) CallContract(to, data string) (string, error) {
-	resp, err := p.Call("eth_call", map[string]string{
-		"to":   to,
-		"data": data,
-	}, "latest")
-	if err != nil {
-		return "", err
-	}
-	return resp.Result.(string), nil
-}
-
-// SendTransaction 发送交易
-func (p *PoleRPC) SendTransaction(from, to, data string) (string, error) {
-	resp, err := p.Call("eth_sendTransaction", map[string]string{
-		"from": from,
-		"to":   to,
-		"data": data,
-	})
-	if err != nil {
-		return "", err
-	}
-	return resp.Result.(string), nil
+	return result.Data.Balance, nil
 }
 
 // GetTransactionCount 获取交易数量
 func (p *PoleRPC) GetTransactionCount(address string) (string, error) {
-	resp, err := p.Call("eth_getTransactionCount", address, "latest")
+	resp, err := p.doGet("/account/" + address)
 	if err != nil {
 		return "0", err
 	}
-	if resp == nil || resp.Result == nil {
-		return "0", nil
+
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Nonce uint64 `json:"nonce"`
+		} `json:"data"`
 	}
-	switch v := resp.Result.(type) {
-	case string:
-		return v, nil
-	default:
-		return "0", nil
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "0", err
 	}
+
+	return fmt.Sprintf("0x%x", result.Data.Nonce), nil
+}
+
+// SendTransaction 发送交易
+func (p *PoleRPC) SendTransaction(from, to, data string) (string, error) {
+	type TxRequest struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+		Data string `json:"data"`
+	}
+
+	req := TxRequest{
+		From: from,
+		To:   to,
+		Data: data,
+	}
+
+	reqData, _ := json.Marshal(req)
+	resp, err := p.doPost("/tx/broadcast", reqData)
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		TxHash string `json:"tx_hash"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", err
+	}
+
+	return result.TxHash, nil
 }
 
 // SendSignedTransaction 发送已签名交易
 func (p *PoleRPC) SendSignedTransaction(signedTx string) (string, error) {
-	resp, err := p.Call("eth_sendRawTransaction", signedTx)
+	type BroadcastRequest struct {
+		RawTx string `json:"raw_tx"`
+	}
+
+	req := BroadcastRequest{RawTx: signedTx}
+	reqData, _ := json.Marshal(req)
+	resp, err := p.doPost("/tx/broadcast", reqData)
 	if err != nil {
 		return "", err
 	}
-	if resp == nil || resp.Result == nil {
-		return "", fmt.Errorf("no result")
+
+	var result struct {
+		TxHash string `json:"tx_hash"`
 	}
-	switch v := resp.Result.(type) {
-	case string:
-		return v, nil
-	default:
-		return "", fmt.Errorf("unexpected result type")
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", err
 	}
+
+	return result.TxHash, nil
 }
 
 // GetTransactionByHash 根据哈希查询交易
 func (p *PoleRPC) GetTransactionByHash(hash string) (map[string]interface{}, error) {
-	resp, err := p.Call("eth_getTransactionByHash", hash)
+	resp, err := p.doGet("/tx/" + hash)
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil || resp.Result == nil {
-		return nil, nil
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, err
 	}
-	switch v := resp.Result.(type) {
-	case map[string]interface{}:
-		return v, nil
-	default:
-		return nil, nil
-	}
+
+	return result, nil
 }
 
-// ParseTxResult 解析交易结果
-func ParseTxResult(resp *RPCResponse) (string, error) {
-	if resp == nil || resp.Result == nil {
-		return "", fmt.Errorf("no result")
+// CallContract 调用合约 view 方法 (PoLE 不支持，返回错误)
+func (p *PoleRPC) CallContract(to, data string) (string, error) {
+	return "", fmt.Errorf("PoLE 不支持 eth_call，请使用 REST API")
+}
+
+// doGet 发送 GET 请求
+func (p *PoleRPC) doGet(path string) ([]byte, error) {
+	url := p.NodeURL + path
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
 	}
-	switch v := resp.Result.(type) {
-	case string:
-		return v, nil
-	default:
-		return "", fmt.Errorf("unexpected type")
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return body, nil
+}
+
+// doPost 发送 POST 请求
+func (p *PoleRPC) doPost(path string, data []byte) ([]byte, error) {
+	url := p.NodeURL + path
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	resp, err := client.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return body, nil
 }
 
 // CreateWorkRecordTx 创建工作记录交易数据
 func CreateWorkRecordTx(agentID string, tokens uint64) string {
-	// 简化版 - 实际需要根据合约 ABI 编码
 	data := fmt.Sprintf("0x12345678%s%x", agentID, tokens)
 	return data
 }
@@ -243,28 +259,37 @@ func SignData(data []byte, privateKey *ecdsa.PrivateKey) ([]byte, error) {
 
 // SignTransaction 完整签名交易
 func SignTransaction(txData, privateKeyHex string) (string, error) {
-	// 解析私钥
-	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
+	if len(privateKeyHex) != 64 {
+		return "", fmt.Errorf("私钥格式错误: 需要 64 位十六进制字符串")
+	}
+
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
 	if err != nil {
-		return "", fmt.Errorf("私钥格式错误: %w", err)
+		return "", fmt.Errorf("私钥解析失败: %w", err)
 	}
 
-	// 生成密钥对（从私钥派生）
-	privateKey := &ecdsa.PrivateKey{
-		D: new(big.Int).SetBytes(privateKeyBytes),
-		PublicKey: ecdsa.PublicKey{
-			Curve: elliptic.P256(),
-			X:     elliptic.P256().Params().Gx,
-			Y:     elliptic.P256().Params().Gy,
-		},
-	}
-
-	// 签名交易数据
-	signature, err := SignData([]byte(txData), privateKey)
+	signature, err := crypto.Sign([]byte(txData), privateKey)
 	if err != nil {
 		return "", fmt.Errorf("签名失败: %w", err)
 	}
 
-	// 编码为 RLP + 签名 (简化版)
+	return "0x" + hex.EncodeToString(signature), nil
+}
+
+// SignTransactionWithChainID 使用 chainID 签名交易 (EIP-155)
+func SignTransactionWithChainID(txData, privateKeyHex string, chainID uint64) (string, error) {
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		return "", fmt.Errorf("私钥解析失败: %w", err)
+	}
+
+	txHash := crypto.Keccak256Hash([]byte(txData))
+	signature, err := crypto.Sign(txHash.Bytes(), privateKey)
+	if err != nil {
+		return "", fmt.Errorf("签名失败: %w", err)
+	}
+
+	signature[64] = byte(chainID) + 35 + (signature[64] - 35) % 2
+
 	return "0x" + hex.EncodeToString(signature), nil
 }

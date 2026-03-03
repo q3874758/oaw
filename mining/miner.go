@@ -14,6 +14,15 @@ import (
 	"oaw/wallet"
 )
 
+// 难度配置
+const (
+	MinDifficulty     = 2   // 最小难度
+	MaxDifficulty     = 10  // 最大难度
+	TargetBlockTime   = 10  // 目标区块时间 (秒)
+	DifficultyAdjust  = 1   // 每次调整幅度
+	BlockTimeWindow   = 10  // 计算区块时间的窗口大小
+)
+
 // Block 区块
 type Block struct {
 	Index        int       `json:"index"`
@@ -27,22 +36,36 @@ type Block struct {
 
 // Miner 矿工
 type Miner struct {
-	wallet     *wallet.Wallet
-	working    bool
-	difficulty int
-	blocks     []Block
-	mu         sync.RWMutex
-	dataDir    string
+	wallet       *wallet.Wallet
+	working      bool
+	difficulty   int
+	minDifficulty int
+	maxDifficulty int
+	blocks       []Block
+	mu           sync.RWMutex
+	dataDir      string
+	lastBlockTime int64
 }
 
 // NewMiner 创建矿工
 func NewMiner(w *wallet.Wallet, dataDir string) *Miner {
 	return &Miner{
-		wallet:     w,
-		difficulty: 4, // 初始难度
-		blocks:     []Block{},
-		dataDir:    dataDir,
+		wallet:       w,
+		difficulty:   4, // 初始难度
+		minDifficulty: MinDifficulty,
+		maxDifficulty: MaxDifficulty,
+		blocks:       []Block{},
+		dataDir:      dataDir,
+		lastBlockTime: time.Now().Unix(),
 	}
+}
+
+// SetDifficultyRange 设置难度范围
+func (m *Miner) SetDifficultyRange(min, max int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.minDifficulty = min
+	m.maxDifficulty = max
 }
 
 // Start 开始挖矿
@@ -131,17 +154,63 @@ func (m *Miner) mineBlock() {
 		nonce++
 		
 		// 防止无限循环
-		if nonce > 100000 {
+		if nonce > 1000000 {
 			break
 		}
 	}
 
 	m.blocks = append(m.blocks, block)
 	
+	// 动态调整难度
+	m.adjustDifficulty()
+	
 	// 保存到文件
 	m.saveBlocks()
 	
-	fmt.Printf("✅ 挖到新区块 #%d, 奖励: %.2f OAW\n", block.Index, block.Value)
+	fmt.Printf("✅ 挖到新区块 #%d, 奖励: %.2f OAW (难度: %d)\n", block.Index, block.Value, m.difficulty)
+}
+
+// adjustDifficulty 动态调整难度
+func (m *Miner) adjustDifficulty() {
+	if len(m.blocks) < 2 {
+		return
+	}
+
+	// 计算最近几个区块的平均生成时间
+	window := BlockTimeWindow
+	if window > len(m.blocks) {
+		window = len(m.blocks)
+	}
+	
+	var totalTime int64
+	for i := len(m.blocks) - window; i < len(m.blocks)-1; i++ {
+		totalTime += m.blocks[i+1].Timestamp - m.blocks[i].Timestamp
+	}
+	avgBlockTime := totalTime / int64(window-1)
+	
+	// 根据平均区块时间调整难度
+	if avgBlockTime < TargetBlockTime/2 {
+		// 生成太快，增加难度
+		m.difficulty += DifficultyAdjust
+	} else if avgBlockTime > TargetBlockTime*2 {
+		// 生成太慢，降低难度
+		m.difficulty -= DifficultyAdjust
+	}
+	
+	// 限制难度范围
+	if m.difficulty < m.minDifficulty {
+		m.difficulty = m.minDifficulty
+	}
+	if m.difficulty > m.maxDifficulty {
+		m.difficulty = m.maxDifficulty
+	}
+}
+
+// GetDifficulty 获取当前难度
+func (m *Miner) GetDifficulty() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.difficulty
 }
 
 func (m *Miner) calculateHash(b Block) string {
